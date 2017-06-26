@@ -24,10 +24,10 @@ from functools import wraps
 
 import pandas as pd
 from scipy.signal import welch, cwt, ricker, find_peaks_cwt
+from scipy.stats import linregress
 from statsmodels.tsa.ar_model import AR
 from statsmodels.tsa.stattools import adfuller
-from functools import reduce
-
+from scipy.stats import linregress
 
 # todo: make sure '_' works in parameter names in all cases, add a warning if not
 
@@ -49,9 +49,9 @@ def _get_length_sequences_where(x):
     >>> _get_length_sequences_where(x)
     >>> [1, 3, 1, 2]
 
-    :param x: A iterable containing only 1, True, 0 and False values
+    :param x: An iterable containing only 1, True, 0 and False values
     :return: A list with the length of all sub-sequences where the array is either True or False. If no ones or Trues
-    contained, a the list [0] is returned.
+    contained, the list [0] is returned.
     """
     if len(x) == 0:
         return [0]
@@ -95,7 +95,7 @@ def set_property(key, value):
 def variance_larger_than_standard_deviation(x):
     """
     Boolean variable denoting if the variance of x is greater than its standard deviation. Is equal to variance of x
-    being larger than 1.
+    being larger than 1
 
     :param x: the time series to calculate the feature of
     :type x: pandas.Series
@@ -109,13 +109,13 @@ def variance_larger_than_standard_deviation(x):
 @not_apply_to_raw_numbers
 def large_standard_deviation(x, r):
     """
-    Boolean variable denoting if the variance of x is higher than half of the range, calculated as the half the
-    difference between max and min of x.
+    Boolean variable denoting if the standard dev of x is higher
+    than 'r' times the range = difference between max and min of x.
     Hence it checks if
 
     .. math::
 
-        | std(x) | > r * (max(X)-min(X))
+        std(x) > r * (max(X)-min(X))
 
     According to a rule of the thumb, the standard deviation should be a forth of the range of the values.
 
@@ -126,12 +126,13 @@ def large_standard_deviation(x, r):
     :return: the value of this feature
     :return type: bool
     """
+    x = np.asarray(x)
     return np.std(x) > (r * (max(x) - min(x)))
 
 
-@set_property("fctype", "aggregate_with_parameters")
+@set_property("fctype", "apply")
 @not_apply_to_raw_numbers
-def symmetry_looking(x, r):
+def symmetry_looking(x, c, param):
     """
     Boolean variable denoting if the distribution of x *looks symmetric*. This is the case if
 
@@ -146,8 +147,11 @@ def symmetry_looking(x, r):
     :return: the value of this feature
     :return type: bool
     """
-    return abs(np.mean(x) - np.median(x)) < (r * (max(x) - min(x)))
-
+    x = np.asarray(x)
+    mean_median_difference = abs(np.mean(x) - np.median(x))
+    max_min_difference = max(x) - min(x)
+    return pd.Series({"{}__symmetry_looking__r_{}".format(c, r["r"]):
+                          mean_median_difference < (r["r"] * max_min_difference) for r in param})
 
 @set_property("fctype", "aggregate")
 @not_apply_to_raw_numbers
@@ -247,7 +251,7 @@ def mean_autocorrelation(x):
         return 0
     else:
         r = np.correlate(x - np.mean(x), x - np.mean(x), mode='full')
-        r = r[0: (n-1)] / np.arange(n-1, 0, -1)
+        r = r[0: (n - 1)] / np.arange(n - 1, 0, -1)
         return np.nanmean(r / var)
 
 
@@ -255,7 +259,7 @@ def mean_autocorrelation(x):
 @not_apply_to_raw_numbers
 def augmented_dickey_fuller(x):
     """
-    The Augmented Dickey-Fuller is a hypothesis test which checks whether a unit root is present in a time
+    The Augmented Dickey-Fuller test is a hypothesis test which checks whether a unit root is present in a time
     series sample. This feature calculator returns the value of the respective test statistic.
 
     See the statsmodels implementation for references and more details.
@@ -334,7 +338,7 @@ def mean_change(x):
 @not_apply_to_raw_numbers
 def mean_second_derivate_central(x):
     """
-    Returns the mean value of an central approximation of the second derivate
+    Returns the mean value of a central approximation of the second derivative
 
     .. math::
 
@@ -477,7 +481,7 @@ def absolute_sum_of_changes(x):
 @not_apply_to_raw_numbers
 def longest_strike_below_mean(x):
     """
-    Returns the length of the longest consecutive subsequence that in x that is smaller than the mean of x
+    Returns the length of the longest consecutive subsequence in x that is smaller than the mean of x
 
     :param x: the time series to calculate the feature of
     :type x: pandas.Series
@@ -492,7 +496,7 @@ def longest_strike_below_mean(x):
 @not_apply_to_raw_numbers
 def longest_strike_above_mean(x):
     """
-    Returns the length of the longest consecutive subsequence that in x that is bigger than the mean of x
+    Returns the length of the longest consecutive subsequence in x that is bigger than the mean of x
 
     :param x: the time series to calculate the feature of
     :type x: pandas.Series
@@ -515,7 +519,9 @@ def count_above_mean(x):
     :return type: float
     """
 
-    return sum(x > np.mean(x))
+    x = np.asarray(x)
+    m = np.mean(x)
+    return np.where(x > m)[0].shape[0]
 
 
 @set_property("fctype", "aggregate")
@@ -530,14 +536,17 @@ def count_below_mean(x):
     :return type: float
     """
 
-    return sum(x < np.mean(x))
+    x = np.asarray(x)
+    m = np.mean(x)
+    return np.where(x < m)[0].shape[0]
 
 
 @set_property("fctype", "aggregate")
 @not_apply_to_raw_numbers
 def last_location_of_maximum(x):
     """
-    Returns the relative last location of the maximum value of x. The position is calculated relatively to the length of x.
+    Returns the relative last location of the maximum value of x.
+    The position is calculated relatively to the length of x.
 
     :param x: the time series to calculate the feature of
     :type x: pandas.Series
@@ -552,7 +561,8 @@ def last_location_of_maximum(x):
 @not_apply_to_raw_numbers
 def first_location_of_maximum(x):
     """
-    Returns the first location of the maximum value of x. The position is calculated relatively to the length of x.
+    Returns the first location of the maximum value of x.
+    The position is calculated relatively to the length of x.
 
     :param x: the time series to calculate the feature of
     :type x: pandas.Series
@@ -567,7 +577,8 @@ def first_location_of_maximum(x):
 @not_apply_to_raw_numbers
 def last_location_of_minimum(x):
     """
-    Returns the last location of the minimal value of x. The position is calculated relatively to the length of x.
+    Returns the last location of the minimal value of x.
+    The position is calculated relatively to the length of x.
 
     :param x: the time series to calculate the feature of
     :type x: pandas.Series
@@ -582,7 +593,8 @@ def last_location_of_minimum(x):
 @not_apply_to_raw_numbers
 def first_location_of_minimum(x):
     """
-    Returns the first location of the minimal value of x. The position is calculated relatively to the length of x.
+    Returns the first location of the minimal value of x.
+    The position is calculated relatively to the length of x.
 
     :param x: the time series to calculate the feature of
     :type x: pandas.Series
@@ -610,8 +622,9 @@ def percentage_of_reoccurring_datapoints_to_all_datapoints(x):
     :return: the value of this feature
     :return type: float
     """
-    x = pd.Series(x)
-    return (x.value_counts() > 1).mean()
+
+    unique, counts = np.unique(x, return_counts=True)
+    return np.sum(counts > 1) / float(counts.shape[0])
 
 
 @set_property("fctype", "aggregate")
@@ -637,7 +650,7 @@ def percentage_of_reoccurring_values_to_all_values(x):
         return np.nan
 
     value_counts = x.value_counts()
-    return 1.0 * value_counts[value_counts > 1].sum() / len(x)
+    return value_counts[value_counts > 1].sum() / len(x)
 
 
 @set_property("fctype", "aggregate")
@@ -652,18 +665,36 @@ def sum_of_reoccurring_values(x):
     :return: the value of this feature
     :return type: float
     """
-    x = pd.Series(x)
-    value_counts = x.value_counts()
-    doubled_values = value_counts[value_counts > 1]
-    return sum(doubled_values.index * doubled_values)
+    unique, counts = np.unique(x, return_counts=True)
+    counts[counts < 2] = 0
+    counts[counts > 1] = 1
+    return np.sum(counts * unique)
+
+
+@set_property("fctype", "aggregate")
+@not_apply_to_raw_numbers
+def sum_of_reoccurring_data_points(x):
+    """
+    Returns the sum of all data points, that are present in the time series
+    more than once.
+
+    :param x: the time series to calculate the feature of
+    :type x: pandas.Series
+    :return: the value of this feature
+    :return type: float
+    """
+    unique, counts = np.unique(x, return_counts=True)
+    counts[counts < 2] = 0
+    return np.sum(counts * unique)
 
 
 @set_property("fctype", "aggregate")
 @not_apply_to_raw_numbers
 def ratio_value_number_to_time_series_length(x):
     """
-    Returns a factor which is 1 if all values in the time series occur only once, and below one if this is not the
-    case. In principle, it just returns
+    Returns a factor which is 1 if all values in the time series occur only once,
+    and below one if this is not the case.
+    In principle, it just returns
 
         # unique values / # values
 
@@ -676,7 +707,7 @@ def ratio_value_number_to_time_series_length(x):
     if len(x) == 0:
         return np.nan
 
-    return 1.0 * len(set(x))/len(x)
+    return len(set(x))/len(x)
 
 
 @set_property("fctype", "apply")
@@ -685,7 +716,6 @@ def fft_coefficient(x, c, param):
     """
     Calculates the fourier coefficients of the one-dimensional discrete Fourier Transform for real input by fast
     fourier transformation algorithm
-
 
     :param x: the time series to calculate the feature of
     :type x: pandas.Series
@@ -736,11 +766,20 @@ def number_peaks(x, n):
     :return: the value of this feature
     :return type: float
     """
-    res = list()
+    x = np.asarray(x)
+    x_reduced = x[n:-n]
+
+    res = None
     for i in range(1, n + 1):
-        res += [(x > np.roll(x, i))[n:-n]]
-        res += [(x > np.roll(x, -i))[n:-n]]
-    return sum(reduce(lambda a, b: a & b, res))
+        result_first = (x_reduced > np.roll(x, i)[n:-n])
+
+        if res is None:
+            res = result_first
+        else:
+            res &= result_first
+
+        res &= (x_reduced > np.roll(x, -i)[n:-n])
+    return sum(res)
 
 
 @set_property("fctype", "apply")
@@ -759,18 +798,24 @@ def index_mass_quantile(x, c, param):
     :return: the different feature values
     :return type: pandas.Series
     """
-    s = sum(np.abs(x))
-    res = pd.Series()
 
-    if s == 0: # all values in x are zero or it has length 0
+    x = np.asarray(x)
+    abs_x = np.abs(x)
+    s = sum(abs_x)
+
+    res = {}
+
+    if s == 0:
+        # all values in x are zero or it has length 0
         for config in param:
             res["{}__index_mass_quantile__q_{}".format(c, config["q"])] = np.NaN
-    else: # at least one value is not zero
-        mass_centralized = np.cumsum(np.abs(x)) * 1.0 / s
+    else:
+        # at least one value is not zero
+        mass_centralized = np.cumsum(abs_x) / s
         for config in param:
             res["{}__index_mass_quantile__q_{}".format(c, config["q"])] = \
                 (np.argmax(mass_centralized >= config["q"])+1)/len(x)
-    return res
+    return pd.Series(res)
 
 
 @set_property("fctype", "aggregate_with_parameters")
@@ -789,6 +834,35 @@ def number_cwt_peaks(x, n):
     :return type: int
     """
     return len(find_peaks_cwt(vector=x, widths=np.array(list(range(1, n + 1))), wavelet=ricker))
+
+
+@set_property("fctype", "apply")
+@not_apply_to_raw_numbers
+def linear_trend(x, c, param):
+    """
+    Calculate a linear least-squares regression for the values of the time series versus the sequence from 0 to
+    length of the time series minus one.
+    This feature assumes the signal to be uniformly sampled. It will not use the time stamps to fit the model.
+    The parameters control which of the characteristics are returned.
+
+    Possible extracted attributes are "pvalue", "rvalue", "intercept", "slope", "stderr", see the documentation of
+    linregress for more information.
+
+    :param x: the time series to calculate the feature of
+    :type x: pandas.Series
+    :param c: the time series name
+    :type c: str
+    :param param: contains dictionaries {"attr": x} with x an string, the attribute name of the regression model
+    :type param: list
+    :return: the different feature values
+    :return type: pandas.Series
+    """
+    # todo: we could use the index of the DataFrame here
+
+    linReg = linregress(range(len(x)), x)
+
+    return pd.Series(data=[getattr(linReg, config["attr"]) for config in param],
+                     index=["{}__linear_trend__attr_\"{}\"".format(c, config["attr"]) for config in param])
 
 
 @set_property("fctype", "apply")
@@ -816,39 +890,30 @@ def cwt_coefficients(x, c, param):
     :return: the different feature values
     :return type: pandas.Series
     """
-    df_cfg = pd.DataFrame(param)
-    res = pd.Series()
 
-    for widths in df_cfg["widths"].unique():
+    calculated_cwt = {}
+    res = []
+    indices = []
 
-        # the calculated_cwt will shape (len(widths), len(x)).
-        calculated_cwt = cwt(x, ricker, widths)
+    for parameter_combination in param:
+        widths = parameter_combination["widths"]
+        w = parameter_combination["w"]
+        coeff = parameter_combination["coeff"]
 
-        for w in df_cfg[df_cfg["widths"] == widths]["w"].unique():
+        if widths not in calculated_cwt:
+            calculated_cwt[widths] = cwt(x, ricker, widths)
 
-            # get the coefficients corresponding to this array of widths
-            coeff = df_cfg[(df_cfg["widths"] == widths) & (df_cfg["w"] == w)]["coeff"].unique()
+        calculated_cwt_for_widths = calculated_cwt[widths]
 
-            # get the row of the current width
-            i = widths.index(w)
+        indices += ["{}__cwt_coefficients__widths_{}__coeff_{}__w_{}".format(c, widths, coeff, w)]
 
-            if calculated_cwt.shape[1] <= max(coeff):
-                # The calculated cwt is not width enough, at least one coefficient would cause Index Error
-                res_tmp = []
+        i = widths.index(w)
+        if calculated_cwt_for_widths.shape[1] <= coeff:
+            res += [np.NaN]
+        else:
+            res += [calculated_cwt_for_widths[i, coeff]]
 
-                for j in coeff:
-                    if calculated_cwt.shape[1] <= j: # the current index is out of range
-                        res_tmp.append(np.NaN)
-                    else:
-                        res_tmp.append(calculated_cwt[i, j])
-            else:
-                res_tmp = calculated_cwt[i, coeff]
-
-            res = res.append(pd.Series(res_tmp,
-                                       index=["{}__cwt_coefficients__widths_{}__coeff_{}__w_{}".format(
-                                           c, widths, m, w) for m in coeff]))
-
-    return res
+    return pd.Series(res, index=indices)
 
 
 @set_property("fctype", "apply")
@@ -856,7 +921,7 @@ def cwt_coefficients(x, c, param):
 def spkt_welch_density(x, c, param):
     """
     This feature calculator estimates the cross power spectral density of the time series x at different frequencies.
-    To do so, first the time series is shifted from the time domain to the frequency domain.
+    To do so, the time series is first shifted from the time domain to the frequency domain.
 
     The feature calculators returns the power spectrum of the different frequencies.
 
@@ -891,8 +956,9 @@ def spkt_welch_density(x, c, param):
 @not_apply_to_raw_numbers
 def ar_coefficient(x, c, param):
     """
-    This feature calculator fit the unconditional maximum likelihood of an autoregressive AR(k) process. The k parameter
-    is the maximum lag of the process
+    This feature calculator fits the unconditional maximum likelihood
+    of an autoregressive AR(k) process.
+    The k parameter is the maximum lag of the process
 
     .. math::
 
@@ -910,32 +976,36 @@ def ar_coefficient(x, c, param):
     :return x: the different feature values
     :return type: pandas.Series
     """
-    df_cfg = pd.DataFrame(param)
-    df_cfg["k"] = df_cfg["k"].apply(int)
+    calculated_ar_params = {}
 
-    res = pd.Series()
+    x_as_list = list(x)
+    calculated_AR = AR(x_as_list)
 
-    for k in df_cfg["k"].unique():
-        coeff = df_cfg[df_cfg["k"] == k]["coeff"]
-        try:
-            mod = AR(list(x)).fit(maxlag=k, solver="mle").params
-            res_tmp = pd.Series(index=["{}__ar_coefficient__k_{}__coeff_{}".format(c, k, p) for p in coeff])
+    res = {}
 
-            for p in coeff:
-                if p <= k:
-                    try:
-                        res_tmp["{}__ar_coefficient__k_{}__coeff_{}".format(c, k, p)] = mod[p]
-                    except IndexError:
-                        res_tmp["{}__ar_coefficient__k_{}__coeff_{}".format(c, k, p)] = 0
-                else:
-                    res_tmp["{}__ar_coefficient__k_{}__coeff_{}".format(c, k, p)] = np.NaN
+    for parameter_combination in param:
+        k = parameter_combination["k"]
+        p = parameter_combination["coeff"]
 
-        except (LinAlgError, ValueError):
-            res_tmp = pd.Series([np.NaN] * len(coeff),
-                                index=["{}__ar_coefficient__k_{}__coeff_{}".format(c, k, p) for p in coeff])
+        column_name = "{}__ar_coefficient__k_{}__coeff_{}".format(c, k, p)
 
-        res = res.append(res_tmp)
-    return res
+        if k not in calculated_ar_params:
+            try:
+                calculated_ar_params[k] = calculated_AR.fit(maxlag=k, solver="mle").params
+            except (LinAlgError, ValueError):
+                calculated_ar_params[k] = [np.NaN]*k
+
+        mod = calculated_ar_params[k]
+
+        if p <= k:
+            try:
+                res[column_name] = mod[p]
+            except IndexError:
+                res[column_name] = 0
+        else:
+            res[column_name] = np.NaN
+
+    return pd.Series(res)
 
 
 @set_property("fctype", "aggregate_with_parameters")
@@ -992,7 +1062,7 @@ def time_reversal_asymmetry_statistic(x, lag):
 
         \\mathbb{E}[L^2(X)^2 \cdot L(X) - L(X) \cdot X^2]
 
-    where :math:`\\mathbb{E}` is the mean and :math:`L` is the lag operator. It was proposed as a proposed in [1] as a
+    where :math:`\\mathbb{E}` is the mean and :math:`L` is the lag operator. It was proposed in [1] as a
     promising feature to extract from time series.
 
     References
@@ -1024,7 +1094,8 @@ def time_reversal_asymmetry_statistic(x, lag):
 @not_apply_to_raw_numbers
 def binned_entropy(x, max_bins):
     """
-    First bins the values of x into max_bins equidistant bins. Then calculates the value of
+    First bins the values of x into max_bins equidistant bins.
+    Then calculates the value of
 
     .. math::
 
@@ -1040,7 +1111,7 @@ def binned_entropy(x, max_bins):
     :return type: float
     """
     hist, bin_edges = np.histogram(x, bins=max_bins)
-    probs = hist * 1.0 / len(x)
+    probs = hist / len(x)
     return - np.sum(p * np.math.log(p) for p in probs if p != 0)
 
 # todo - include latex formula
@@ -1122,7 +1193,7 @@ def autocorrelation(x, lag):
 @not_apply_to_raw_numbers
 def quantile(x, q):
     """
-    Calculates the q quantile of x. This is the value of x such that q% of the ordere values from x are lower than.
+    Calculates the q quantile of x. This is the value of x greater than q% of the ordered values from x.
 
     :param x: the time series to calculate the feature of
     :type x: pandas.Series
@@ -1245,3 +1316,196 @@ def approximate_entropy(x, m, r):
         return np.sum(np.log(C)) / (N - m + 1.0)
 
     return np.abs(_phi(m) - _phi(m + 1))
+
+def _estimate_friedrich_coefficients(x, m, r):
+    """
+    Coefficients of polynomial :math:`h(x)`, which has been fitted to 
+    the deterministic dynamics of Langevin model 
+    .. math::
+        \dot{x}(t) = h(x(t)) + \mathcal{N}(0,R)
+
+    As described by
+
+        Friedrich et al. (2000): Physics Letters A 271, p. 217-222
+        *Extracting model equations from experimental data*
+
+    For short time-series this method is highly dependent on the parameters.
+
+    :param x: the time series to calculate the feature of
+    :type x: pandas.Series
+    :param m: order of polynom to fit for estimating fixed points of dynamics
+    :type m: int
+    :param r: number of quantils to use for averaging
+    :type r: float
+
+    :return: coefficients of polynomial of deterministic dynamics
+    :return type: ndarray
+    """
+    df = pd.DataFrame({'signal': x[:-1], 'delta': np.diff(x)})
+    try:
+        df['quantiles'] = pd.qcut(df.signal, r)
+        binned = True
+    except ValueError:
+        binned = False
+        coeff = [np.NaN] * (m+1)
+
+    if binned:
+        quantiles = df.groupby('quantiles')
+        
+        result = pd.DataFrame({'x_mean': quantiles.signal.mean(),
+                               'y_mean': quantiles.delta.mean()
+        })
+
+        result.dropna(inplace=True)
+
+        try:
+            coeff = np.polyfit(result.x_mean, result.y_mean, deg=m)
+        except (np.linalg.LinAlgError, ValueError):
+            coeff = [np.NaN] * (m+1)
+    return coeff
+
+@set_property("fctype", "apply")
+def friedrich_coefficients(x, c, param):
+    """
+    Coefficients of polynomial :math:`h(x)`, which has been fitted to 
+    the deterministic dynamics of Langevin model 
+    .. math::
+        \dot{x}(t) = h(x(t)) + \mathcal{N}(0,R)
+
+    as described by
+
+        Friedrich et al. (2000): Physics Letters A 271, p. 217-222
+        *Extracting model equations from experimental data*
+
+
+    For short time-series this method is highly dependent on the parameters.
+
+    :param x: the time series to calculate the feature of
+    :type x: pandas.Series
+    :param c: the time series name
+    :type c: str
+    :param param: contains dictionaries {"coeff": x} with x int and x >= 0
+    :type param: list
+    :return: the different feature values
+    :return type: pandas.Series
+    """
+    coefficients = set([config["coeff"] for config in param])
+    for coeff in coefficients:
+        if coeff < 0:
+            raise ValueError("Coefficients must be positive or zero.")
+
+    m = param[0]['m']
+    r = param[0]['r']
+
+    coeff = _estimate_friedrich_coefficients(x, m, r)
+
+    name = lambda q: "{}__friedrich_coefficients__m_{}__r_{}__coeff_{}".format(c,m,r,q)
+    return pd.Series(coeff, index=[name(q) for q in range(m,-1,-1)])
+
+@set_property("fctype", "aggregate_with_parameters")
+def max_langevin_fixed_point(x, r, m):
+    """
+    Largest fixed point of dynamics  :math:argmax_x {h(x)=0}` estimated from polynomial :math:`h(x)`, 
+    which has been fitted to the deterministic dynamics of Langevin model
+    .. math::
+        \dot(x)(t) = h(x(t)) + R \mathcal(N)(0,1)
+
+    as described by
+
+        Friedrich et al. (2000): Physics Letters A 271, p. 217-222
+        *Extracting model equations from experimental data*
+
+    For short time-series this method is highly dependent on the parameters.
+
+    :param x: the time series to calculate the feature of
+    :type x: pandas.Series
+    :param m: order of polynom to fit for estimating fixed points of dynamics
+    :type m: int
+    :param r: number of quantils to use for averaging
+    :type r: float
+
+    :return: Largest fixed point of deterministic dynamics
+    :return type: float
+    """
+
+    coeff = _estimate_friedrich_coefficients(x, m, r)
+
+    try:
+        max_fixed_point = np.max(np.real(np.roots(coeff)))
+    except (np.linalg.LinAlgError, ValueError):
+        return np.nan
+    
+    return max_fixed_point
+
+
+def _aggregate_on_chunks(x, f_agg, chunk_len):
+    """
+    Takes the time series x and constructs a lower sampled version of it by applying the aggregation function f_agg on
+    consecutive chunks of length chunk_len
+
+    :param x: the time series to calculate the aggregation of
+    :type x: pandas.Series
+    :param f_agg: The name of the aggregation function that should be an attribute of the pandas.Series
+    :type f_agg: str
+    :param chunk_len: The size of the chunks where to aggregate the time series
+    :type chunk_len: int
+    :return: A list of the aggregation function over the chunks
+    :return type: list
+    """
+    return [getattr(x[i * chunk_len: (i + 1) * chunk_len], f_agg)() for i in range(int(np.ceil(len(x) / chunk_len)))]
+
+
+@set_property("fctype", "apply")
+@not_apply_to_raw_numbers
+def agg_linear_trend(x, c, param):
+    """
+    Calculates a linear least-squares regression for values of the time series that were aggregated over chunks versus
+    the sequence from 0 up to the number of chunks minus one.
+
+    This feature assumes the signal to be uniformly sampled. It will not use the time stamps to fit the model.
+
+    The parameters attr controls which of the characteristics are returned. Possible extracted attributes are "pvalue",
+    "rvalue", "intercept", "slope", "stderr", see the documentation of linregress for more information.
+
+    The chunksize is regulated by "chunk_len". It specifies how many time series values are in each chunk.
+
+    Further, the aggregation function is controlled by "f_agg", which can use "max", "min" or , "mean", "median"
+
+    :param x: the time series to calculate the feature of
+    :type x: pandas.Series
+    :param c: the time series name
+    :type c: str
+    :param param: contains dictionaries {"attr": x, "chunk_len": l, "f_agg": f} with x, f an string and l an int
+    :type param: list
+    :return: the different feature values
+    :return type: pandas.Series
+    """
+    # todo: we could use the index of the DataFrame here
+
+    calculated_agg = {}
+    res_data = []
+    res_index = []
+
+    for parameter_combination in param:
+
+        chunk_len = parameter_combination["chunk_len"]
+        f_agg = parameter_combination["f_agg"]
+
+        aggregate_result = _aggregate_on_chunks(x, f_agg, chunk_len)
+        if f_agg not in calculated_agg or chunk_len not in calculated_agg[f_agg]:
+            if chunk_len >= len(x):
+                calculated_agg[f_agg] = {chunk_len: np.NaN}
+            else:
+                lin_reg_result = linregress(range(len(aggregate_result)), aggregate_result)
+                calculated_agg[f_agg] = {chunk_len: lin_reg_result}
+
+        attr = parameter_combination["attr"]
+
+        if chunk_len >= len(x):
+            res_data.append(np.NaN)
+        else:
+            res_data.append(getattr(calculated_agg[f_agg][chunk_len], attr))
+
+        res_index.append("{}__agg_linear_trend__f_agg_\"{}\"__chunk_len_{}__attr_\"{}\"".format(c, f_agg, chunk_len, attr))
+
+    return pd.Series(data=res_data, index=res_index)

@@ -9,28 +9,47 @@ from random import shuffle
 from unittest import TestCase
 from tsfresh.feature_extraction.feature_calculators import *
 from tsfresh.feature_extraction.feature_calculators import _get_length_sequences_where
+from tsfresh.feature_extraction.feature_calculators import _estimate_friedrich_coefficients
+from tsfresh.feature_extraction.feature_calculators import _aggregate_on_chunks
+from tsfresh.examples.driftbif_simulation import velocity
 import six
 import math
 
+
 class FeatureCalculationTestCase(TestCase):
+
+    def assertIsNaN(self, result):
+        self.assertTrue(np.isnan(result), msg="{} is not np.NaN")
 
     def assertEqualOnAllArrayTypes(self, f, input_to_f, result, *args, **kwargs):
         self.assertEqual(f(input_to_f, *args, **kwargs), result,
                          msg="Not equal for lists: %s != %s" % (f(input_to_f, *args, **kwargs), result))
         self.assertEqual(f(np.array(input_to_f), *args, **kwargs), result,
-                         msg="Not equal for numpy.arrays: %s != %s" % (f(np.array(input_to_f), *args, **kwargs), result))
+                         msg="Not equal for numpy.arrays: %s != %s" % (
+                         f(np.array(input_to_f), *args, **kwargs), result))
         self.assertEqual(f(pd.Series(input_to_f), *args, **kwargs), result,
-                         msg="Not equal for pandas.Series: %s != %s" % (f(pd.Series(input_to_f), *args, **kwargs), result))
+                         msg="Not equal for pandas.Series: %s != %s" % (
+                         f(pd.Series(input_to_f), *args, **kwargs), result))
 
     def assertTrueOnAllArrayTypes(self, f, input_to_f, *args, **kwargs):
         self.assertTrue(f(input_to_f, *args, **kwargs), msg="Not true for lists")
         self.assertTrue(f(np.array(input_to_f), *args, **kwargs), msg="Not true for numpy.arrays")
         self.assertTrue(f(pd.Series(input_to_f), *args, **kwargs), msg="Not true for pandas.Series")
 
+    def assertAllTrueOnAllArrayTypes(self, f, input_to_f, *args, **kwargs):
+        self.assertTrue(all(f(input_to_f, *args, **kwargs)), msg="Not true for lists")
+        self.assertTrue(all(f(np.array(input_to_f), *args, **kwargs)), msg="Not true for numpy.arrays")
+        self.assertTrue(all(f(pd.Series(input_to_f), *args, **kwargs)), msg="Not true for pandas.Series")
+
     def assertFalseOnAllArrayTypes(self, f, input_to_f, *args, **kwargs):
         self.assertFalse(f(input_to_f, *args, **kwargs), msg="Not false for lists")
         self.assertFalse(f(np.array(input_to_f), *args, **kwargs), msg="Not false for numpy.arrays")
         self.assertFalse(f(pd.Series(input_to_f), *args, **kwargs), msg="Not false for pandas.Series")
+
+    def assertAllFalseOnAllArrayTypes(self, f, input_to_f, *args, **kwargs):
+        self.assertFalse(any(f(input_to_f, *args, **kwargs)), msg="Not false for lists")
+        self.assertFalse(any(f(np.array(input_to_f), *args, **kwargs)), msg="Not false for numpy.arrays")
+        self.assertFalse(any(f(pd.Series(input_to_f), *args, **kwargs)), msg="Not false for pandas.Series")
 
     def assertAlmostEqualOnAllArrayTypes(self, f, input_t_f, result, *args, **kwargs):
         self.assertAlmostEqual(f(input_t_f, *args, **kwargs), result,
@@ -50,11 +69,12 @@ class FeatureCalculationTestCase(TestCase):
     def assertEqualPandasSeriesWrapper(self, f, input_to_f, result, *args, **kwargs):
         self.assertEqual(f(pd.Series(input_to_f), *args, **kwargs), result,
                          msg="Not equal for pandas.Series: %s != %s" % (
-                         f(pd.Series(input_to_f), *args, **kwargs), result))
+                             f(pd.Series(input_to_f), *args, **kwargs), result))
 
     def test_catch_Numbers(self):
         def f(x, y):
             return [x, y]
+
         fdeco = not_apply_to_raw_numbers(f)
         self.assertEqual(fdeco(3, 5), 0)
         self.assertEqual(fdeco([], 5), [[], 5])
@@ -84,12 +104,12 @@ class FeatureCalculationTestCase(TestCase):
         self.assertFalseOnAllArrayTypes(large_standard_deviation, [-1, -1, 1, 1], r=0.5)
 
     def test_symmetry_looking(self):
-        self.assertTrueOnAllArrayTypes(symmetry_looking, [-1, -1, 1, 1], r=0.05)
-        self.assertTrueOnAllArrayTypes(symmetry_looking, [-1, -1, 1, 1], r=0.75)
-        self.assertFalseOnAllArrayTypes(symmetry_looking, [-1, -1, 1, 1], r=0)
-        self.assertFalseOnAllArrayTypes(symmetry_looking, [-1, -1, -1, -1, 1], r=0.05)
-        self.assertTrueOnAllArrayTypes(symmetry_looking, [-2, -2, -2, -1, -1, -1], r=0.05)
-        self.assertTrueOnAllArrayTypes(symmetry_looking, [-0.9, -0.900001], r=0.05)
+        self.assertAllTrueOnAllArrayTypes(symmetry_looking, [-1, -1, 1, 1],
+                                          "c", [dict(r=0.05), dict(r=0.75)])
+        self.assertAllFalseOnAllArrayTypes(symmetry_looking, [-1, -1, 1, 1], "c", [dict(r=0)])
+        self.assertAllFalseOnAllArrayTypes(symmetry_looking, [-1, -1, -1, -1, 1], "c", [dict(r=0.05)])
+        self.assertAllTrueOnAllArrayTypes(symmetry_looking, [-2, -2, -2, -1, -1, -1], "c", [dict(r=0.05)])
+        self.assertAllTrueOnAllArrayTypes(symmetry_looking, [-0.9, -0.900001], "c", [dict(r=0.05)])
 
     def test_has_duplicate_max(self):
         self.assertTrueOnAllArrayTypes(has_duplicate_max, [2.1, 0, 0, 2.1, 1.1])
@@ -132,7 +152,7 @@ class FeatureCalculationTestCase(TestCase):
         self.assertAlmostEqualOnAllArrayTypes(mean_autocorrelation, x, 0)
 
         x = [1, 2, -3]
-        expected_res = 1/np.var(x) * (1*2+2*(-3)-3/2)/2
+        expected_res = 1 / np.var(x) * (1 * 2 + 2 * (-3) - 3 / 2) / 2
         self.assertAlmostEqualOnAllArrayTypes(mean_autocorrelation, x, expected_res)
 
     def test_augmented_dickey_fuller(self):
@@ -260,31 +280,42 @@ class FeatureCalculationTestCase(TestCase):
         self.assertIsNanOnAllArrayTypes(first_location_of_minimum, [])
 
     def test_percentage_of_doubled_datapoints(self):
-        self.assertAlmostEqualOnAllArrayTypes(percentage_of_reoccurring_datapoints_to_all_datapoints, [1, 1, 2, 3, 4], 0.25)
+        self.assertAlmostEqualOnAllArrayTypes(percentage_of_reoccurring_datapoints_to_all_datapoints, [1, 1, 2, 3, 4],
+                                              0.25)
         self.assertAlmostEqualOnAllArrayTypes(percentage_of_reoccurring_datapoints_to_all_datapoints, [1, 1.5, 2, 3], 0)
         self.assertAlmostEqualOnAllArrayTypes(percentage_of_reoccurring_datapoints_to_all_datapoints, [1], 0)
-        self.assertAlmostEqualOnAllArrayTypes(percentage_of_reoccurring_datapoints_to_all_datapoints, [1.111, -2.45, 1.111, 2.45], 1.0 / 3.0)
+        self.assertAlmostEqualOnAllArrayTypes(percentage_of_reoccurring_datapoints_to_all_datapoints,
+                                              [1.111, -2.45, 1.111, 2.45], 1.0 / 3.0)
         self.assertIsNanOnAllArrayTypes(percentage_of_reoccurring_datapoints_to_all_datapoints, [])
 
     def test_ratio_of_doubled_values(self):
         self.assertAlmostEqualOnAllArrayTypes(percentage_of_reoccurring_values_to_all_values, [1, 1, 2, 3, 4], 0.4)
         self.assertAlmostEqualOnAllArrayTypes(percentage_of_reoccurring_values_to_all_values, [1, 1.5, 2, 3], 0)
         self.assertAlmostEqualOnAllArrayTypes(percentage_of_reoccurring_values_to_all_values, [1], 0)
-        self.assertAlmostEqualOnAllArrayTypes(percentage_of_reoccurring_values_to_all_values, [1.111, -2.45, 1.111, 2.45], 0.5)
+        self.assertAlmostEqualOnAllArrayTypes(percentage_of_reoccurring_values_to_all_values,
+                                              [1.111, -2.45, 1.111, 2.45], 0.5)
         self.assertIsNanOnAllArrayTypes(percentage_of_reoccurring_values_to_all_values, [])
 
-    def test_sum_of_doubled_values(self):
-        self.assertAlmostEqualOnAllArrayTypes(sum_of_reoccurring_values, [1, 1, 2, 3, 4], 2)
+    def test_sum_of_reoccurring_values(self):
+        self.assertAlmostEqualOnAllArrayTypes(sum_of_reoccurring_values, [1, 1, 2, 3, 4, 4], 5)
         self.assertAlmostEqualOnAllArrayTypes(sum_of_reoccurring_values, [1, 1.5, 2, 3], 0)
         self.assertAlmostEqualOnAllArrayTypes(sum_of_reoccurring_values, [1], 0)
-        self.assertAlmostEqualOnAllArrayTypes(sum_of_reoccurring_values, [1.111, -2.45, 1.111, 2.45], 2.222)
+        self.assertAlmostEqualOnAllArrayTypes(sum_of_reoccurring_values, [1.111, -2.45, 1.111, 2.45], 1.111)
         self.assertAlmostEqualOnAllArrayTypes(sum_of_reoccurring_values, [], 0)
+
+    def test_sum_of_reoccurring_data_points(self):
+        self.assertAlmostEqualOnAllArrayTypes(sum_of_reoccurring_data_points, [1, 1, 2, 3, 4, 4], 10)
+        self.assertAlmostEqualOnAllArrayTypes(sum_of_reoccurring_data_points, [1, 1.5, 2, 3], 0)
+        self.assertAlmostEqualOnAllArrayTypes(sum_of_reoccurring_data_points, [1], 0)
+        self.assertAlmostEqualOnAllArrayTypes(sum_of_reoccurring_data_points, [1.111, -2.45, 1.111, 2.45], 2.222)
+        self.assertAlmostEqualOnAllArrayTypes(sum_of_reoccurring_data_points, [], 0)
 
     def test_uniqueness_factor(self):
         self.assertAlmostEqualOnAllArrayTypes(ratio_value_number_to_time_series_length, [1, 1, 2, 3, 4], 0.8)
         self.assertAlmostEqualOnAllArrayTypes(ratio_value_number_to_time_series_length, [1, 1.5, 2, 3], 1)
         self.assertAlmostEqualOnAllArrayTypes(ratio_value_number_to_time_series_length, [1], 1)
-        self.assertAlmostEqualOnAllArrayTypes(ratio_value_number_to_time_series_length, [1.111, -2.45, 1.111, 2.45], 0.75)
+        self.assertAlmostEqualOnAllArrayTypes(ratio_value_number_to_time_series_length, [1.111, -2.45, 1.111, 2.45],
+                                              0.75)
         self.assertIsNanOnAllArrayTypes(ratio_value_number_to_time_series_length, [])
 
     def test_fft_coefficient(self):
@@ -307,6 +338,16 @@ class FeatureCalculationTestCase(TestCase):
         param = [{"q": 0.5}]
         expected_index = ["TEST__index_mass_quantile__q_0.5"]
         res = index_mass_quantile(x, c, param)
+        self.assertIsInstance(res, pd.Series)
+        six.assertCountEqual(self, list(res.index), expected_index)
+        self.assertAlmostEqual(res["TEST__index_mass_quantile__q_0.5"], 0.5, places=1)
+
+        # Test for parts of pandas series
+        x = pd.Series([0] * 55 + [1] * 101)
+        c = "TEST"
+        param = [{"q": 0.5}]
+        expected_index = ["TEST__index_mass_quantile__q_0.5"]
+        res = index_mass_quantile(x[x > 0], c, param)
         self.assertIsInstance(res, pd.Series)
         six.assertCountEqual(self, list(res.index), expected_index)
         self.assertAlmostEqual(res["TEST__index_mass_quantile__q_0.5"], 0.5, places=1)
@@ -352,10 +393,9 @@ class FeatureCalculationTestCase(TestCase):
         six.assertCountEqual(self, list(res.index), expected_index)
         self.assertTrue(np.isnan(res["TEST__index_mass_quantile__q_0.5"]))
 
-
     def test_number_cwt_peaks(self):
-        pass
-        # todo: add unit test
+        x = [1, 1, 1, 1, 1, 1, 1, 5, 1, 1, 1, 1, 1, 1, 5, 1, 1, 1, 1, 1, 1]
+        self.assertEqualOnAllArrayTypes(number_cwt_peaks, x, 2, 2)
 
     def test_spkt_welch_density(self):
         pass
@@ -406,7 +446,7 @@ class FeatureCalculationTestCase(TestCase):
 
         x = [1, 1] + 5 * [0]
         for i in range(2, len(x)):
-            x[i] = (-2) * x[i-2] + 3.5 * x[i-1] + 1
+            x[i] = (-2) * x[i - 2] + 3.5 * x[i - 1] + 1
 
         res = ar_coefficient(x, c, param)
         expected_index = ["TEST__ar_coefficient__k_1__coeff_0", "TEST__ar_coefficient__k_1__coeff_1",
@@ -422,7 +462,7 @@ class FeatureCalculationTestCase(TestCase):
         self.assertTrue(np.isnan(res["TEST__ar_coefficient__k_2__coeff_3"]))
 
     def test_time_reversal_asymmetry_statistic(self):
-        x = [1]*10
+        x = [1] * 10
         self.assertAlmostEqualOnAllArrayTypes(time_reversal_asymmetry_statistic, x, 0, 0)
         self.assertAlmostEqualOnAllArrayTypes(time_reversal_asymmetry_statistic, x, 0, 1)
         self.assertAlmostEqualOnAllArrayTypes(time_reversal_asymmetry_statistic, x, 0, 2)
@@ -446,11 +486,11 @@ class FeatureCalculationTestCase(TestCase):
         self.assertAlmostEqualOnAllArrayTypes(binned_entropy, list(range(10)), - np.math.log(1 / 10), 100)
         self.assertAlmostEqualOnAllArrayTypes(binned_entropy, list(range(100)), - np.math.log(1 / 2), 2)
 
-    
     def test_sample_entropy(self):
-        ts = [1, 4, 5, 1, 7, 3, 1, 2, 5, 8, 9, 7, 3, 7, 9, 5, 4, 3, 9, 1, 2, 3, 4, 2, 9, 6, 7, 4, 9, 2, 9, 9, 6, 5, 1, 3, 8, 1, 5, 3, 8, 4, 1, 2, 2, 1, 6, 5, 3, 6, 5, 4, 8, 9, 6, 7, 5, 3, 2, 5, 4, 2, 5, 1, 6, 5, 3, 5, 6, 7, 8, 5, 2, 8, 6, 3, 8, 2, 7, 1, 7, 3, 5, 6, 2, 1, 3, 7, 3, 5, 3, 7, 6, 7, 7, 2, 3, 1, 7, 8]
+        ts = [1, 4, 5, 1, 7, 3, 1, 2, 5, 8, 9, 7, 3, 7, 9, 5, 4, 3, 9, 1, 2, 3, 4, 2, 9, 6, 7, 4, 9, 2, 9, 9, 6, 5, 1,
+              3, 8, 1, 5, 3, 8, 4, 1, 2, 2, 1, 6, 5, 3, 6, 5, 4, 8, 9, 6, 7, 5, 3, 2, 5, 4, 2, 5, 1, 6, 5, 3, 5, 6, 7,
+              8, 5, 2, 8, 6, 3, 8, 2, 7, 1, 7, 3, 5, 6, 2, 1, 3, 7, 3, 5, 3, 7, 6, 7, 7, 2, 3, 1, 7, 8]
         self.assertAlmostEqualOnAllArrayTypes(sample_entropy, ts, 2.21187685)
-    
 
     def test_autocorrelation(self):
         self.assertAlmostEqualOnAllArrayTypes(autocorrelation, [1, 2, 1, 2, 1, 2], -1, 1)
@@ -496,12 +536,173 @@ class FeatureCalculationTestCase(TestCase):
         self.assertEqualPandasSeriesWrapper(range_count, list(range(10)), 9, min=0, max=9)
         self.assertEqualPandasSeriesWrapper(range_count, list(range(10)), 10, min=0, max=10)
         self.assertEqualPandasSeriesWrapper(range_count, list(range(0, -10, -1)), 9, min=-10, max=0)
-        self.assertEqualPandasSeriesWrapper(range_count, [np.NaN, np.PINF, np.NINF] + list(range(10)), 10, min=0, max=10)
+        self.assertEqualPandasSeriesWrapper(range_count, [np.NaN, np.PINF, np.NINF] + list(range(10)), 10, min=0,
+                                            max=10)
 
     def test_approximate_entropy(self):
         self.assertEqualOnAllArrayTypes(approximate_entropy, [1], 0, m=2, r=0.5)
         self.assertEqualOnAllArrayTypes(approximate_entropy, [1, 2], 0, m=2, r=0.5)
         self.assertEqualOnAllArrayTypes(approximate_entropy, [1, 2, 3], 0, m=2, r=0.5)
         self.assertEqualOnAllArrayTypes(approximate_entropy, [1, 2, 3], 0, m=2, r=0.5)
-        self.assertAlmostEqualOnAllArrayTypes(approximate_entropy, [12, 13, 15, 16, 17]*10, 0.282456191, m=2, r=0.9)
-        self.assertRaises(ValueError, approximate_entropy, x=[12, 13, 15, 16, 17]*10, m=2, r=-0.5)
+        self.assertAlmostEqualOnAllArrayTypes(approximate_entropy, [12, 13, 15, 16, 17] * 10, 0.282456191, m=2, r=0.9)
+        self.assertRaises(ValueError, approximate_entropy, x=[12, 13, 15, 16, 17] * 10, m=2, r=-0.5)
+
+    def test_estimate_friedrich_coefficients(self):
+        """
+        Estimate friedrich coefficients
+        """
+        default_params = {"m": 3, "r": 30}
+
+        # active Brownian motion
+        ds = velocity(tau=3.8, delta_t=0.05, R=3e-4, seed=0)
+        v = ds.simulate(1000000, v0=np.zeros(1))
+        coeff = _estimate_friedrich_coefficients(v[:, 0], **default_params)
+        self.assertTrue(abs(coeff[-1]) < 0.0001)
+
+        # Brownian motion
+        ds = velocity(tau=2.0 / 0.3 - 3.8, delta_t=0.05, R=3e-4, seed=0)
+        v = ds.simulate(1000000, v0=np.zeros(1))
+        coeff = _estimate_friedrich_coefficients(v[:, 0], **default_params)
+        self.assertTrue(abs(coeff[-1]) < 0.0001)
+
+    def test_friedrich_coefficients(self):
+        # Test binning error returns vector of NaNs
+        c = "TEST"
+        param = [{"coeff": coeff, "m": 2, "r": 30} for coeff in range(4)]
+        x = np.zeros(1000)
+
+        res = friedrich_coefficients(x, c, param)
+        expected_index = ["TEST__friedrich_coefficients__m_2__r_30__coeff_0",
+                          "TEST__friedrich_coefficients__m_2__r_30__coeff_1",
+                          "TEST__friedrich_coefficients__m_2__r_30__coeff_2"]
+
+        self.assertIsInstance(res, pd.Series)
+        six.assertCountEqual(self, list(res.index), expected_index)
+        self.assertTrue(np.sum(np.isnan(res)), 3)
+
+    def test_max_langevin_fixed_point(self):
+        """
+        Estimating the intrinsic velocity of a dissipative soliton
+        """
+        default_params = {"m": 3, "r": 30}
+
+        # active Brownian motion
+        ds = velocity(tau=3.8, delta_t=0.05, R=3e-4, seed=0)
+        v = ds.simulate(1000000, v0=np.zeros(1))
+        v0 = max_langevin_fixed_point(v[:, 0], **default_params)
+        self.assertTrue(abs(ds.deterministic - v0) < 0.0001)
+
+        # Brownian motion
+        ds = velocity(tau=2.0 / 0.3 - 3.8, delta_t=0.05, R=3e-4, seed=0)
+        v = ds.simulate(1000000, v0=np.zeros(1))
+        v0 = max_langevin_fixed_point(v[:, 0], **default_params)
+        self.assertTrue(v0 < 0.001)
+
+    def test_linear_trend(self):
+        # check linear up trend
+        x = range(10)
+        param = [{"attr": "pvalue"}, {"attr": "rvalue"}, {"attr": "intercept"}, {"attr": "slope"}, {"attr": "stderr"}]
+        c = "TEST"
+        res = linear_trend(x, c, param)
+
+        expected_index = ["TEST__linear_trend__attr_\"pvalue\"", "TEST__linear_trend__attr_\"intercept\"",
+                          "TEST__linear_trend__attr_\"rvalue\"", "TEST__linear_trend__attr_\"slope\"",
+                          "TEST__linear_trend__attr_\"stderr\""]
+
+        self.assertEqual(len(res), 5)
+        six.assertCountEqual(self, list(res.index), expected_index)
+        self.assertAlmostEquals(res["TEST__linear_trend__attr_\"pvalue\""], 0)
+        self.assertAlmostEquals(res["TEST__linear_trend__attr_\"stderr\""], 0)
+        self.assertAlmostEquals(res["TEST__linear_trend__attr_\"intercept\""], 0)
+        self.assertAlmostEquals(res["TEST__linear_trend__attr_\"slope\""], 1.0)
+
+        # check p value for random trend
+        np.random.seed(42)
+        x = np.random.uniform(size=100)
+        param = [{"attr": "rvalue"}]
+        res = linear_trend(x, c, param)
+        self.assertLess(abs(res["TEST__linear_trend__attr_\"rvalue\""]), 0.1)
+
+        # check slope and intercept decreasing trend with intercept
+        x = [42 - 2 * x for x in range(10)]
+        param = [{"attr": "intercept"}, {"attr": "slope"}]
+        res = linear_trend(x, c, param)
+        self.assertAlmostEquals(res["TEST__linear_trend__attr_\"intercept\""], 42)
+        self.assertAlmostEquals(res["TEST__linear_trend__attr_\"slope\""], -2)
+
+    def test__aggregate_on_chunks(self):
+        self.assertListEqual(_aggregate_on_chunks(x=pd.Series([0, 1, 2, 3]), f_agg="max", chunk_len=2), [1, 3])
+        self.assertListEqual(_aggregate_on_chunks(x=pd.Series([1, 1, 3, 3]),  f_agg="max", chunk_len=2), [1, 3])
+
+        self.assertListEqual(_aggregate_on_chunks(x=pd.Series([0, 1, 2, 3]), f_agg="min", chunk_len=2), [0, 2])
+        self.assertListEqual(_aggregate_on_chunks(x=pd.Series([0, 1, 2, 3, 5]), f_agg="min", chunk_len=2), [0, 2, 5])
+
+        self.assertListEqual(_aggregate_on_chunks(x=pd.Series([0, 1, 2, 3]), f_agg="mean", chunk_len=2), [0.5, 2.5])
+        self.assertListEqual(_aggregate_on_chunks(x=pd.Series([0, 1, 0, 4, 5]), f_agg="mean", chunk_len=2), [0.5, 2, 5])
+        self.assertListEqual(_aggregate_on_chunks(x=pd.Series([0, 1, 0, 4, 5]), f_agg="mean", chunk_len=3), [1/3, 4.5])
+
+        self.assertListEqual(_aggregate_on_chunks(x=pd.Series([0, 1, 2, 3, 5, -2]),
+                                                  f_agg="median", chunk_len=2), [0.5, 2.5, 1.5])
+        self.assertListEqual(_aggregate_on_chunks(x=pd.Series([-10, 5, 3, -3, 4, -6]),
+                                                  f_agg="median", chunk_len=3), [3, -3])
+        self.assertListEqual(_aggregate_on_chunks(x=pd.Series([0, 1, 2, np.NaN, 5]),
+                                                  f_agg="median", chunk_len=2), [0.5, 2, 5])
+
+    def test_agg_linear_trend(self):
+        x = pd.Series(range(9), index=range(9))
+        c = "TEST"
+        param = [{"attr": "intercept", "chunk_len": 3, "f_agg": "max"},
+                 {"attr": "slope", "chunk_len": 3, "f_agg": "max"},
+                 {"attr": "intercept", "chunk_len": 3, "f_agg": "min"},
+                 {"attr": "slope", "chunk_len": 3, "f_agg": "min"},
+                 {"attr": "intercept", "chunk_len": 3, "f_agg": "mean"},
+                 {"attr": "slope", "chunk_len": 3, "f_agg": "mean"},
+                 {"attr": "intercept", "chunk_len": 3, "f_agg": "median"},
+                 {"attr": "slope", "chunk_len": 3, "f_agg": "median"}]
+        expected_index = ['TEST__agg_linear_trend__f_agg_"max"__chunk_len_3__attr_"intercept"',
+                          'TEST__agg_linear_trend__f_agg_"max"__chunk_len_3__attr_"slope"',
+                          'TEST__agg_linear_trend__f_agg_"min"__chunk_len_3__attr_"intercept"',
+                          'TEST__agg_linear_trend__f_agg_"min"__chunk_len_3__attr_"slope"',
+                          'TEST__agg_linear_trend__f_agg_"mean"__chunk_len_3__attr_"intercept"',
+                          'TEST__agg_linear_trend__f_agg_"mean"__chunk_len_3__attr_"slope"',
+                          'TEST__agg_linear_trend__f_agg_"median"__chunk_len_3__attr_"intercept"',
+                          'TEST__agg_linear_trend__f_agg_"median"__chunk_len_3__attr_"slope"']
+
+        res = agg_linear_trend(x=x, c=c, param=param)
+
+        self.assertEqual(len(res), 8)
+        print(res.index)
+        self.maxDiff = 2000
+        six.assertCountEqual(self, list(res.index), expected_index)
+        self.assertAlmostEquals(res['TEST__agg_linear_trend__f_agg_"max"__chunk_len_3__attr_"intercept"'], 2)
+        self.assertAlmostEquals(res['TEST__agg_linear_trend__f_agg_"max"__chunk_len_3__attr_"slope"'], 3)
+        self.assertAlmostEquals(res['TEST__agg_linear_trend__f_agg_"min"__chunk_len_3__attr_"intercept"'], 0)
+        self.assertAlmostEquals(res['TEST__agg_linear_trend__f_agg_"min"__chunk_len_3__attr_"slope"'], 3)
+        self.assertAlmostEquals(res['TEST__agg_linear_trend__f_agg_"mean"__chunk_len_3__attr_"intercept"'], 1)
+        self.assertAlmostEquals(res['TEST__agg_linear_trend__f_agg_"mean"__chunk_len_3__attr_"slope"'], 3)
+        self.assertAlmostEquals(res['TEST__agg_linear_trend__f_agg_"median"__chunk_len_3__attr_"intercept"'], 1)
+        self.assertAlmostEquals(res['TEST__agg_linear_trend__f_agg_"median"__chunk_len_3__attr_"slope"'], 3)
+
+        x = pd.Series([np.NaN, np.NaN, np.NaN, -3, -3, -3])
+        res = agg_linear_trend(x=x, c=c, param=param)
+
+        self.assertIsNaN(res['TEST__agg_linear_trend__f_agg_"max"__chunk_len_3__attr_"intercept"'])
+        self.assertIsNaN(res['TEST__agg_linear_trend__f_agg_"max"__chunk_len_3__attr_"slope"'])
+        self.assertIsNaN(res['TEST__agg_linear_trend__f_agg_"min"__chunk_len_3__attr_"intercept"'])
+        self.assertIsNaN(res['TEST__agg_linear_trend__f_agg_"min"__chunk_len_3__attr_"slope"'])
+        self.assertIsNaN(res['TEST__agg_linear_trend__f_agg_"mean"__chunk_len_3__attr_"intercept"'])
+        self.assertIsNaN(res['TEST__agg_linear_trend__f_agg_"mean"__chunk_len_3__attr_"slope"'])
+        self.assertIsNaN(res['TEST__agg_linear_trend__f_agg_"median"__chunk_len_3__attr_"intercept"'])
+        self.assertIsNaN(res['TEST__agg_linear_trend__f_agg_"median"__chunk_len_3__attr_"slope"'])
+
+
+        x = pd.Series([np.NaN, np.NaN, -3, -3, -3, -3])
+        res = agg_linear_trend(x=x, c=c, param=param)
+        self.assertAlmostEquals(res['TEST__agg_linear_trend__f_agg_"max"__chunk_len_3__attr_"intercept"'], -3)
+        self.assertAlmostEquals(res['TEST__agg_linear_trend__f_agg_"max"__chunk_len_3__attr_"slope"'], 0)
+        self.assertAlmostEquals(res['TEST__agg_linear_trend__f_agg_"min"__chunk_len_3__attr_"intercept"'], -3)
+        self.assertAlmostEquals(res['TEST__agg_linear_trend__f_agg_"min"__chunk_len_3__attr_"slope"'], 0)
+        self.assertAlmostEquals(res['TEST__agg_linear_trend__f_agg_"mean"__chunk_len_3__attr_"intercept"'], -3)
+        self.assertAlmostEquals(res['TEST__agg_linear_trend__f_agg_"mean"__chunk_len_3__attr_"slope"'], 0)
+        self.assertAlmostEquals(res['TEST__agg_linear_trend__f_agg_"median"__chunk_len_3__attr_"intercept"'], -3)
+        self.assertAlmostEquals(res['TEST__agg_linear_trend__f_agg_"median"__chunk_len_3__attr_"slope"'], 0)
