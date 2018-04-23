@@ -3,18 +3,18 @@
 # Maximilian Christ (maximilianchrist.com), Blue Yonder Gmbh, 2016
 
 """
-This module implements functions to download and load the Human Activity Recognition dataset [4].
-A description of the data set can be found in [5].
+This module implements functions to download and load the Human Activity Recognition dataset [4]_.
+A description of the data set can be found in [5]_.
 
 
 References
 ----------
 
-.. [4] http://mlr.cs.umass.edu/ml/datasets/Human+Activity+Recognition+Using+Smartphones
+.. [4] https://archive.ics.uci.edu/ml/datasets/Human+Activity+Recognition+Using+Smartphones
 .. [5] Davide Anguita, Alessandro Ghio, Luca Oneto, Xavier Parra and Jorge L. Reyes-Ortiz. (2013)
-     A Public Domain Dataset for Human Activity Recognition Using Smartphones.
-     21th European Symposium on Artificial Neural Networks,
-     Computational Intelligence and Machine Learning, ESANN 2013. Bruges, Belgium 24-26 April 2013.
+        A Public Domain Dataset for Human Activity Recognition Using Smartphones.
+        21th European Symposium on Artificial Neural Networks,
+        Computational Intelligence and Machine Learning, ESANN 2013. Bruges, Belgium 24-26 April 2013.
 
 """
 

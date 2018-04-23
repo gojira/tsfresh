@@ -3,16 +3,17 @@
 # Maximilian Christ (maximilianchrist.com), Blue Yonder Gmbh, 2016
 
 """
-This module implements functions to download the Robot Execution Failures LP1 Data Set[1] and load it as as DataFrame.
+This module implements functions to download the Robot Execution Failures LP1 Data Set [1]_, [2]_, [3]_ and load it as
+as DataFrame.
 
 *Important:* You need to download the data set yourself, either manually or via the function
 :func:`~tsfresh.examples.robot_execution_failures.download_robot_execution_failures`
 
 References
 ----------
-.. [1] http://mlr.cs.umass.edu/ml/datasets/Robot+Execution+Failures
+.. [1] https://archive.ics.uci.edu/ml/datasets/Robot+Execution+Failures
 .. [2] Lichman, M. (2013).
-    UCI Machine Learning Repository [http://mlr.cs.umass.edu/ml].
+    UCI Machine Learning Repository [https://archive.ics.uci.edu/ml].
     Irvine, CA: University of California, School of Information and Computer Science.
 .. [3] Camarinha-Matos, L.M., L. Seabra Lopes, and J. Barata (1996).
     Integration and Learning in Supervision of Flexible Assembly Systems.
@@ -41,7 +42,9 @@ data_file_name = os.path.join(module_path, 'data', 'robotfailure-mld', 'lp1.data
 
 def download_robot_execution_failures():
     """
-    Download the Robot Execution Failures LP1 Data Set[1] from the UCI Machine Learning Repository[2] and store it locally.
+    Download the Robot Execution Failures LP1 Data Set[#1] from the UCI Machine Learning Repository [#2] and store it
+    locally.
+
     :return:
 
     Examples
@@ -71,7 +74,7 @@ def download_robot_execution_failures():
         f.write(r.text)
 
 
-def load_robot_execution_failures():
+def load_robot_execution_failures(multiclass=False):
     """
     Load the Robot Execution Failures LP1 Data Set[1].
     The Time series are passed as a flat DataFrame.
@@ -84,6 +87,8 @@ def load_robot_execution_failures():
     >>> print(df.shape)
     (1320, 8)
 
+    :param multiclass: If True, return all target labels. The default returns only "normal" vs all other labels.
+    :type multiclass: bool
     :return: time series data as :class:`pandas.DataFrame` and target vector as :class:`pandas.Series`
     :rtype: tuple
     """
@@ -102,17 +107,17 @@ def load_robot_execution_failures():
             if line[0] not in ['\t', '\n']:
                 cur_id += 1
                 time = 0
-                if line.strip() == 'normal':
-                    id_to_target[cur_id] = 0
+                if multiclass:
+                    id_to_target[cur_id] = line.strip()
                 else:
-                    id_to_target[cur_id] = 1
+                    id_to_target[cur_id] = (line.strip() == 'normal')
             # Data row --> split and convert values, create complete df row
             elif line[0] == '\t':
                 values = list(map(int, line.split('\t')[1:]))
                 df_rows.append([cur_id, time] + values)
                 time += 1
 
-    df = pd.DataFrame(df_rows, columns=['id', 'time', 'a', 'b', 'c', 'd', 'e', 'f'])
+    df = pd.DataFrame(df_rows, columns=['id', 'time', 'F_x', 'F_y', 'F_z', 'T_x', 'T_y', 'T_z'])
     y = pd.Series(id_to_target)
 
     return df, y

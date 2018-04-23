@@ -8,11 +8,15 @@ other features that are not based on time series.
 
 from __future__ import absolute_import
 
+import logging
 import pandas as pd
 import numpy as np
 from tsfresh import defaults
 from tsfresh.utilities.dataframe_functions import check_for_nans_in_columns
-from tsfresh.feature_selection.feature_selector import check_fs_sig_bh
+from tsfresh.feature_selection.relevance import calculate_relevance_table
+
+
+_logger = logging.getLogger(__name__)
 
 
 def select_features(X, y, test_for_binary_target_binary_feature=defaults.TEST_FOR_BINARY_TARGET_BINARY_FEATURE,
@@ -20,7 +24,8 @@ def select_features(X, y, test_for_binary_target_binary_feature=defaults.TEST_FO
                     test_for_real_target_binary_feature=defaults.TEST_FOR_REAL_TARGET_BINARY_FEATURE,
                     test_for_real_target_real_feature=defaults.TEST_FOR_REAL_TARGET_REAL_FEATURE,
                     fdr_level=defaults.FDR_LEVEL, hypotheses_independent=defaults.HYPOTHESES_INDEPENDENT,
-                    n_processes=defaults.N_PROCESSES, chunksize=defaults.CHUNKSIZE):
+                    n_jobs=defaults.N_PROCESSES, chunksize=defaults.CHUNKSIZE,
+                    ml_task='auto'):
     """
     Check the significance of all features (columns) of feature matrix X and return a possibly reduced feature matrix
     only containing relevant features.
@@ -98,16 +103,23 @@ def select_features(X, y, test_for_binary_target_binary_feature=defaults.TEST_FO
                                    independent (e.g. mean and median)
     :type hypotheses_independent: bool
 
-    :param n_processes: Number of processes to use during the p-value calculation
-    :type n_processes: int
+    :param n_jobs: Number of processes to use during the p-value calculation
+    :type n_jobs: int
 
     :param chunksize: Size of the chunks submitted to the worker processes
     :type chunksize: int
 
+    :param ml_task: The intended machine learning task. Either `'classification'`, `'regression'` or `'auto'`.
+                    Defaults to `'auto'`, meaning the intended task is inferred from `y`.
+                    If `y` has a boolean, integer or object dtype, the task is assumend to be classification,
+                    else regression.
+    :type ml_task: str
+
     :return: The same DataFrame as X, but possibly with reduced number of columns ( = features).
     :rtype: pandas.DataFrame
 
-    :raises: ``ValueError`` when the target vector does not fit to the feature matrix.
+    :raises: ``ValueError`` when the target vector does not fit to the feature matrix
+             or `ml_task` is not one of `'auto'`, `'classification'` or `'regression'`.
     """
     check_for_nans_in_columns(X)
 
@@ -116,6 +128,8 @@ def select_features(X, y, test_for_binary_target_binary_feature=defaults.TEST_FO
 
     if len(X) < 2:
         raise ValueError("X must contain at least two samples.")
+    elif len(set(y)) == 1:
+        raise ValueError("y contains only one kind of label, no feature selection possible.")
     elif isinstance(y, pd.Series) and not X.index.isin(y.index).all():
         raise ValueError("Index of X must be a subset of y's index")
     elif isinstance(y, np.ndarray):
@@ -124,7 +138,12 @@ def select_features(X, y, test_for_binary_target_binary_feature=defaults.TEST_FO
 
         y = pd.Series(y, index=X.index)
 
-    df_bh = check_fs_sig_bh(X, y, n_processes, chunksize, fdr_level, hypotheses_independent,
-                            test_for_binary_target_real_feature)
+    relevance_table = calculate_relevance_table(
+        X, y, ml_task=ml_task, n_jobs=n_jobs, chunksize=chunksize,
+        test_for_binary_target_real_feature=test_for_binary_target_real_feature,
+        fdr_level=fdr_level, hypotheses_independent=hypotheses_independent,
+    )
 
-    return X.loc[:, df_bh[df_bh.rejected].Feature]
+    relevant_features = relevance_table[relevance_table.relevant].feature
+
+    return X.loc[:, relevant_features]
